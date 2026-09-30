@@ -1,0 +1,9 @@
+name: task_list_cli
+description: 'This application is a task list app'
+environment:
+  sdk: ^3.13.2
+dependencies:
+  mamba: any
+dev_dependencies:
+  lints: any
+  test: any
