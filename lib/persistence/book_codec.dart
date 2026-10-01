@@ -2,9 +2,11 @@ import 'dart:convert';
 
 import 'package:json_annotation/json_annotation.dart';
 
+import '../domain/naming.dart';
 import '../domain/task.dart';
 import '../domain/task_book_state.dart';
 import '../domain/task_list.dart';
+import '../domain/validation.dart';
 import 'corrupted_book_exception.dart';
 import 'persisted_state.dart';
 
@@ -121,16 +123,19 @@ abstract final class BookCodec {
 
     final lists = <TaskList>[];
     for (final persisted in book.lists) {
-      if (persisted.id.isEmpty) {
+      _requireIdentifier(path, 'A list', persisted.id);
+      _requireAccepted(
+        path,
+        'The name of the list with id ${persisted.id}',
+        persisted.name,
+        normalizeListName,
+      );
+      if (persisted.name != persisted.name.trim()) {
         throw CorruptedBookException(
           path: path,
-          reason: 'A list has an empty id.',
-        );
-      }
-      if (persisted.name.trim().isEmpty) {
-        throw CorruptedBookException(
-          path: path,
-          reason: 'The list with id ${persisted.id} has an empty name.',
+          reason: 'The list with id ${persisted.id} is named '
+              '"${persisted.name}", which has surrounding spaces. Lists are '
+              'looked up by name, so it would not be found.',
         );
       }
       if (!seenIds.add(persisted.id)) {
@@ -149,6 +154,13 @@ abstract final class BookCodec {
       final seenTaskIds = <String>{};
       final tasks = <Task>[];
       for (final persistedTask in persisted.tasks) {
+        _requireIdentifier(path, 'A task in "${persisted.name}"', persistedTask.id);
+        _requireAccepted(
+          path,
+          'A task title in "${persisted.name}"',
+          persistedTask.title,
+          normalizeTaskTitle,
+        );
         if (!seenTaskIds.add(persistedTask.id)) {
           throw CorruptedBookException(
             path: path,
@@ -172,6 +184,51 @@ abstract final class BookCodec {
     }
 
     return TaskBookState(lists: lists);
+  }
+
+  /// Enforces the rules the application applies to its own writes.
+  ///
+  /// Decoding cannot simply normalise what it finds. A value that disagrees
+  /// with what this application would have written means the file came from
+  /// somewhere else, and accepting it quietly is how a name stored as
+  /// " Work " ends up invisible to a lookup for "Work". Rejecting leaves the
+  /// file in place for the user to inspect.
+  static void _requireAccepted(
+    String path,
+    String label,
+    String value,
+    String Function(String) rule,
+  ) {
+    try {
+      rule(value);
+    } on ValidationException catch (error) {
+      throw CorruptedBookException(path: path, reason: '$label: ${error.message}');
+    }
+  }
+
+  /// Rejects an identifier the application would never have produced.
+  ///
+  /// Identifiers are compared verbatim when a task is looked up, so stray
+  /// spaces around one would make that task unreachable by reference.
+  static void _requireIdentifier(String path, String label, String id) {
+    if (id.isEmpty) {
+      throw CorruptedBookException(
+        path: path,
+        reason: '$label has an empty id.',
+      );
+    }
+    if (id != id.trim()) {
+      throw CorruptedBookException(
+        path: path,
+        reason: '$label has an id with surrounding spaces: "$id".',
+      );
+    }
+    if (containsControlCharacter(id)) {
+      throw CorruptedBookException(
+        path: path,
+        reason: '$label has an id containing control characters.',
+      );
+    }
   }
 
   /// Brings an older document up to [currentSchemaVersion].

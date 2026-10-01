@@ -193,6 +193,38 @@ void main() {
         ),
       );
     });
+
+    test('refuses a file holding values the application would not write',
+        () async {
+      bookFile.parent.createSync(recursive: true);
+      // A list named with surrounding spaces is invisible to a lookup for the
+      // trimmed name, so it must be reported rather than loaded.
+      const foreign = '{"version": 1, "lists": [{"id": "a", "name": " Work ", '
+          '"tasks": []}]}';
+      bookFile.writeAsStringSync(foreign);
+
+      expect(
+        repository.load,
+        throwsA(
+          isA<CorruptedBookException>().having(
+            (error) => error.reason,
+            'reason',
+            contains('surrounding spaces'),
+          ),
+        ),
+      );
+
+      await expectLater(
+        repository.update((_) => sampleBook()),
+        throwsA(isA<CorruptedBookException>()),
+      );
+
+      expect(
+        bookFile.readAsStringSync(),
+        foreign,
+        reason: 'the original file has to survive untouched',
+      );
+    });
   });
 
   group('locking', () {

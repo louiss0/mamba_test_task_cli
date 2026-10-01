@@ -195,4 +195,147 @@ void main() {
       );
     });
   });
+
+  group('values the application would never write', () {
+    Matcher rejects(String reasonFragment) => throwsA(
+          isA<CorruptedBookException>()
+              .having((error) => error.path, 'path', path)
+              .having(
+                (error) => error.reason,
+                'reason',
+                contains(reasonFragment),
+              ),
+        );
+
+    /// Wraps [body] in a minimal valid document with one list.
+    String document({required String listId, required String name, String tasks = '[]'}) =>
+        '{"version": 1, "lists": [{"id": $listId, "name": $name, '
+        '"tasks": $tasks}]}';
+
+    String oneTask(String id, String title) =>
+        '[{"id": $id, "title": $title, "completed": false, '
+        '"createdAt": "2026-02-03T09:30:00.000Z"}]';
+
+    test('rejects a list with an empty id', () {
+      expect(
+        () => BookCodec.decode(
+          document(listId: '""', name: '"Work"'),
+          path: path,
+        ),
+        rejects('empty id'),
+      );
+    });
+
+    test('rejects a task with an empty id', () {
+      expect(
+        () => BookCodec.decode(
+          document(
+            listId: '"a"',
+            name: '"Work"',
+            tasks: oneTask('""', '"Buy milk"'),
+          ),
+          path: path,
+        ),
+        rejects('empty id'),
+      );
+    });
+
+    test('rejects an id with surrounding spaces', () {
+      expect(
+        () => BookCodec.decode(
+          document(listId: '" a "', name: '"Work"'),
+          path: path,
+        ),
+        rejects('surrounding spaces'),
+      );
+    });
+
+    test('rejects an empty task title', () {
+      expect(
+        () => BookCodec.decode(
+          document(
+            listId: '"a"',
+            name: '"Work"',
+            tasks: oneTask('"t1"', '""'),
+          ),
+          path: path,
+        ),
+        rejects('cannot be empty'),
+      );
+    });
+
+    test('rejects a whitespace-only task title', () {
+      expect(
+        () => BookCodec.decode(
+          document(
+            listId: '"a"',
+            name: '"Work"',
+            tasks: oneTask('"t1"', '"   "'),
+          ),
+          path: path,
+        ),
+        rejects('cannot be empty'),
+      );
+    });
+
+    test('rejects an empty list name', () {
+      expect(
+        () => BookCodec.decode(
+          document(listId: '"a"', name: '""'),
+          path: path,
+        ),
+        rejects('cannot be empty'),
+      );
+    });
+
+    test('rejects a list name with surrounding spaces', () {
+      // The name has to be stored exactly as the user typed it after trimming,
+      // otherwise a lookup for "Work" cannot find a list called " Work ".
+      expect(
+        () => BookCodec.decode(
+          document(listId: '"a"', name: '" Work "'),
+          path: path,
+        ),
+        rejects('surrounding spaces'),
+      );
+    });
+
+    test('rejects a name longer than the application allows', () {
+      final long = 'x' * 300;
+      expect(
+        () => BookCodec.decode(
+          document(listId: '"a"', name: '"$long"'),
+          path: path,
+        ),
+        rejects('cannot be longer than'),
+      );
+    });
+
+    test('rejects a title containing a control character', () {
+      expect(
+        () => BookCodec.decode(
+          document(
+            listId: '"a"',
+            name: '"Work"',
+            tasks: oneTask('"t1"', r'"Buy\u0007milk"'),
+          ),
+          path: path,
+        ),
+        rejects('control characters'),
+      );
+    });
+
+    test('accepts a title with an ordinary space', () {
+      final state = BookCodec.decode(
+        document(
+          listId: '"a"',
+          name: '"Work"',
+          tasks: oneTask('"t1"', '"Buy milk"'),
+        ),
+        path: path,
+      );
+
+      expect(state.lists.single.tasks.single.title, 'Buy milk');
+    });
+  });
 }
