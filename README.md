@@ -78,6 +78,8 @@ The sidebar shows all lists and task counts. The task pane shows the selected li
 | ? / F1 | Keyboard help |
 | q | Quit |
 
+Help is scrollable even at 48×14: use Up/Down, Page Up/Page Down, or Home/End to read every entry. Its scroll/close hint stays visible. Esc, Enter, or q closes help without quitting the application.
+
 Forms use Nocterm's text field: Enter saves, Esc cancels. Errors remain in the form so they can be corrected. Confirmation dialogs default to cancellation: only `y` deletes; `n` or Esc cancels, and Enter does not confirm. Both task and list deletions are confirmed in the TUI, including empty lists. Creating a task switches to All and selects the new task so it is visible. Completing a task in the Incomplete filter immediately removes it from that view after saving succeeds.
 
 Every successful mutation is saved immediately; there is no separate Save action. Navigation, filtering and dialogs do not write task data. Use a terminal at least 48 columns by 14 rows; wider terminals provide more room for titles. All terminal rendering, text editing, keyboard input, styling, scrolling and dialogs are handled by Nocterm.

@@ -566,7 +566,10 @@ final class _HelpDialog extends StatelessComponent {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('Keyboard help', style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text(
+            'Keyboard help',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
           Expanded(
             child: ListView(
               keyboardScrollable: true,

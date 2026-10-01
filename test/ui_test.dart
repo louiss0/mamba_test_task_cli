@@ -37,11 +37,14 @@ void main() {
     Future<void> settle(NoctermTester tester) =>
         tester.pump(const Duration(milliseconds: 250));
     Future<void> until(NoctermTester tester, bool Function() predicate) async {
-      for (var i = 0; i < 100 && !predicate(); i++) {
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (!predicate() && DateTime.now().isBefore(deadline)) {
         await tester.pump(const Duration(milliseconds: 10));
       }
       expect(predicate(), isTrue, reason: tester.renderToString());
       await settle(tester);
+      // Paint any scroll changes requested by post-layout callbacks.
+      await tester.pump();
     }
 
     test('empty state creates a list and task using forms, with immediate persistence', () async {
@@ -244,74 +247,98 @@ void main() {
       },
     );
 
-    test('appending a task beyond the viewport reveals its selected row', () async {
-      await service.createList('Work');
-      for (var i = 0; i < 40; i++) {
-        await service.createTask('Work', 'Task $i');
-      }
-      await testNocterm('append task visibility', (tester) async {
-        await tester.pumpComponent(TaskApp(service));
-        await tester.sendKey(LogicalKey.keyN);
-        await tester.enterText('New task');
-        await tester.sendEnter();
-        await until(tester, () => service.query('Work').length == 41);
-        await tester.pump();
-        expect(tester.terminalState, containsText('> [ ] New task'));
-        expect(service.query('Work').last.title, 'New task');
-      });
-    });
+    test(
+      'appending a task beyond the viewport reveals its selected row',
+      () async {
+        await service.createList('Work');
+        for (var i = 0; i < 40; i++) {
+          await service.createTask('Work', 'Task $i');
+        }
+        await testNocterm('append task visibility', (tester) async {
+          await tester.pumpComponent(TaskApp(service));
+          await tester.sendKey(LogicalKey.keyN);
+          await tester.enterText('New task');
+          await tester.sendEnter();
+          await until(tester, () => service.query('Work').length == 41);
+          await tester.pump();
+          expect(tester.terminalState, containsText('> [ ] New task'));
+          expect(service.query('Work').last.title, 'New task');
+        });
+      },
+    );
 
-    test('appending a list beyond the viewport reveals its selected row', () async {
-      for (var i = 0; i < 40; i++) {
-        await service.createList('List $i');
-      }
-      await testNocterm('append list visibility', (tester) async {
-        await tester.pumpComponent(TaskApp(service));
-        await tester.sendTab();
-        await tester.sendKey(LogicalKey.keyN);
-        await tester.enterText('New list');
-        await tester.sendEnter();
-        await until(tester, () => service.lists.length == 41);
-        await tester.pump();
-        expect(tester.terminalState, containsText('> New list (0)'));
-        expect(tester.terminalState, containsText('TASK LIST  /  New list'));
-      });
-    });
+    test(
+      'appending a list beyond the viewport reveals its selected row',
+      () async {
+        for (var i = 0; i < 40; i++) {
+          await service.createList('List $i');
+        }
+        await testNocterm('append list visibility', (tester) async {
+          await tester.pumpComponent(TaskApp(service));
+          await tester.sendTab();
+          await tester.sendKey(LogicalKey.keyN);
+          await tester.enterText('New list');
+          await tester.sendEnter();
+          await until(tester, () => service.lists.length == 41);
+          await tester.pump();
+          expect(tester.terminalState, containsText('> New list (0)'));
+          expect(tester.terminalState, containsText('TASK LIST  /  New list'));
+        });
+      },
+    );
 
-    test('keyboard help is readable and scrollable at the minimum size', () async {
-      final before = writes;
-      await testNocterm('minimum-size help', (tester) async {
-        await tester.pumpComponent(TaskApp(service));
-        await tester.sendKey(LogicalKey.f1);
-        expect(tester.terminalState, containsText('Keyboard help'));
-        expect(tester.terminalState, containsText('Esc close'));
-        final screens = <String>[tester.renderToString()];
-        for (var i = 0; i < 30; i++) {
-          await tester.sendArrowDown();
+    test(
+      'keyboard help is readable and scrollable at the minimum size',
+      () async {
+        final before = writes;
+        await testNocterm('minimum-size help', (tester) async {
+          await tester.pumpComponent(TaskApp(service));
+          await tester.sendKey(LogicalKey.f1);
           expect(tester.terminalState, containsText('Keyboard help'));
           expect(tester.terminalState, containsText('Esc close'));
-          screens.add(tester.renderToString());
-        }
-        final visibleHelp = screens.join('\n');
-        for (final entry in [
-          'Tab / Left / Right', 'Up / Down / j / k', 'Home / End',
-          'Page Up / Page Down', 'n: Create', 'e: Rename',
-          'Space / x: Complete', 'd / Delete: Delete',
-          '1 / 2 / 3', 'f: Cycle', 'q: Quit',
-          'Enter saves a form; Esc cancels it.', 'stable IDs',
-        ]) {
-          expect(visibleHelp, contains(entry));
-        }
-        await tester.sendKey(LogicalKey.home);
-        expect(tester.terminalState, containsText('Tab / Left / Right'));
-        await tester.sendKey(LogicalKey.end);
-        expect(tester.terminalState, containsText('stable IDs'));
-        await tester.sendEscape();
-        await tester.pump();
-        expect(tester.terminalState, isNot(containsText('Keyboard help')));
-        expect(writes, before);
-      }, size: const Size(48, 14));
-    });
+          final screens = <String>[tester.renderToString()];
+          for (var i = 0; i < 30; i++) {
+            await tester.sendArrowDown();
+            expect(tester.terminalState, containsText('Keyboard help'));
+            expect(tester.terminalState, containsText('Esc close'));
+            screens.add(tester.renderToString());
+          }
+          final visibleHelp = screens.join('\n');
+          for (final entry in [
+            'Tab / Left / Right: Switch panes',
+            'Up / Down / j / k: Select list or task',
+            'Home / End: First / last item',
+            'Page Up / Page Down: Move ten items',
+            'n: Create in the focused pane',
+            'e: Rename list / edit task',
+            'Space / x: Complete or reopen task',
+            'd / Delete: Delete with confirmation',
+            '1 / 2 / 3: All / Incomplete / Completed',
+            'f: Cycle completion filters',
+            'q: Quit (every change is saved)',
+            'Enter saves a form; Esc cancels it.',
+            'Selection uses stable IDs, not row numbers.',
+          ]) {
+            expect(visibleHelp, contains(entry));
+          }
+          await tester.sendKey(LogicalKey.home);
+          expect(tester.terminalState, containsText('Tab / Left / Right'));
+          await tester.sendKey(LogicalKey.pageDown);
+          expect(tester.terminalState, containsText('Keyboard help'));
+          expect(tester.terminalState, containsText('stable IDs'));
+          await tester.sendKey(LogicalKey.pageUp);
+          expect(tester.terminalState, containsText('Tab / Left / Right'));
+          await tester.sendKey(LogicalKey.end);
+          expect(tester.terminalState, containsText('stable IDs'));
+          await tester.sendKey(LogicalKey.keyN);
+          expect(tester.terminalState, containsText('Keyboard help'));
+          await tester.sendEscape();
+          await tester.pump();
+          expect(tester.terminalState, isNot(containsText('Keyboard help')));
+          expect(writes, before);
+        }, size: const Size(48, 14));
+      },
+    );
 
     test('long lists keep keyboard-selected rows visible', () async {
       await service.createList('Work');
@@ -321,8 +348,11 @@ void main() {
       await testNocterm('scrolling', (tester) async {
         await tester.pumpComponent(TaskApp(service));
         await tester.sendKey(LogicalKey.end);
+        // The post-layout scroll request paints on the following frame.
+        await tester.pump();
         expect(tester.terminalState, containsText('> [ ] Task 39'));
         await tester.sendKey(LogicalKey.home);
+        await tester.pump();
         expect(tester.terminalState, containsText('> [ ] Task 0'));
         await tester.sendKey(LogicalKey.f1);
         await settle(tester);
