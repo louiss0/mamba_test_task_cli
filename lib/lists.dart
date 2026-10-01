@@ -1,100 +1,191 @@
-import 'dart:convert';
-
 import 'package:mamba/mamba.dart';
 
-import 'path_command.dart';
+import 'application/open_task_book.dart';
+import 'cli/guard_command.dart';
+import 'cli/command_rules.dart';
+import 'persistence/json_task_repository.dart';
 
-final _list = NormalPositional(
-  'list',
-  regExp: RegExp(r'.+'),
-  description: 'List name (case-insensitive) or full ID.',
-);
-final _newName = NormalPositional('name', regExp: RegExp(r'.+'));
-final _json = BooleanFlag('json', description: 'Emit JSON for scripts.');
-final _yes = BooleanFlag(
-  'yes',
-  short: 'y',
-  description: 'Confirm permanent deletion.',
-);
 
-final class Lists extends GroupCommand {
-  new() : super([ListShow(), ListAdd(), ListRename(), ListDelete()]);
+/// Owns the commands that manage task lists.
+final class ListsCommand extends GroupCommand {
+  new({TaskRepository? repository}) : super(_childrenOf(repository));
+
   @override
   String get name => 'lists';
+
   @override
-  String get shortDescription => 'Show, create, rename, and delete lists.';
+  String get shortDescription => 'Create, rename, and remove task lists.';
+
+  static List<Command> _childrenOf(TaskRepository? repository) {
+    final book = resolveRepository(repository);
+    return [
+      ListsLs(book),
+      ListsCreate(book),
+      ListsRename(book),
+      ListsRm(book),
+    ];
+  }
 }
 
-final class ListShow extends Command {
-  new() : super(flags: [_json]);
-  @override
-  String get name => 'show';
-  @override
-  String get shortDescription =>
-      'Show every list with its persistent ID and task count.';
-  @override
-  Future<String?> run(ParsedInputs inputs, List<String> args) => withService(
-    inputs,
-    (service) {
-      if (inputs.valueOf(_json)) {
-        return jsonEncode([
-          for (final list in service.lists)
-            {'id': list.id, 'name': list.name, 'taskCount': list.tasks.length},
-        ]);
-      }
-      if (service.lists.isEmpty) {
-        return 'No lists yet. Create one with: lists add "Personal"';
-      }
-      return service.lists
-          .map((list) => '${list.id}\t${list.name}\t${list.tasks.length} tasks')
-          .join('\n');
-    },
-  );
-}
+/// Prints every list with its task counts.
+final class ListsLs extends Command {
+  new(this.repository);
 
-final class ListAdd extends Command {
-  new() : super(mandatoryPositionals: [_newName]);
-  @override
-  String get name => 'add';
-  @override
-  String get shortDescription => 'Create a named list and print its ID.';
-  @override
-  Future<String?> run(ParsedInputs inputs, List<String> args) => withService(
-    inputs,
-    (service) async => (await service.createList(inputs.valueOf(_newName))).id,
-  );
-}
+  final TaskRepository repository;
 
-final class ListRename extends Command {
-  new() : super(mandatoryPositionals: [_list, _newName]);
   @override
-  String get name => 'rename';
-  @override
-  String get shortDescription => 'Rename a list without changing its ID.';
-  @override
-  Future<String?> run(ParsedInputs inputs, List<String> args) => withService(
-    inputs,
-    (service) async {
-      await service.renameList(inputs.valueOf(_list), inputs.valueOf(_newName));
-      return 'List renamed.';
-    },
-  );
-}
+  String get name => 'ls';
 
-final class ListDelete extends Command {
-  new() : super(mandatoryPositionals: [_list], flags: [_yes]);
   @override
-  String get name => 'delete';
-  @override
-  String get shortDescription =>
-      'Delete a list; --yes is required if it contains tasks.';
+  String get shortDescription => 'Show every task list.';
+
   @override
   Future<String?> run(ParsedInputs inputs, List<String> args) =>
-      withService(inputs, (service) async {
-        await service.deleteList(
-          inputs.valueOf(_list),
-          confirmed: inputs.valueOf(_yes),
+      guardCommand(() async {
+        final book = await openTaskBook(repository: repository);
+        final lists = book.lists;        if (lists.isEmpty) {
+          return 'No lists yet.\n'
+              'Create one with: task_list lists create <name>';
+        }
+
+        final nameWidth = lists.fold<int>(
+          'NAME'.length,
+          (longest, list) =>
+              list.name.length > longest ? list.name.length : longest,
         );
-        return 'List deleted.';
+        final buffer = StringBuffer()..writeln(
+            '${'NAME'.padRight(nameWidth)}  TASKS  OPEN  DONE');
+        for (final list in lists) {
+          buffer.writeln(
+            '${list.name.padRight(nameWidth)}  '
+            '${list.tasks.length.toString().padLeft(5)}  '
+            '${list.openCount.toString().padLeft(4)}  '
+            '${list.completedCount.toString().padLeft(4)}',
+          );
+        }
+        return buffer.toString().trimRight();
+      });
+}
+
+/// Creates a list.
+final class ListsCreate extends Command {
+  new(this.repository) : super(mandatoryPositionals: [listName]);
+
+  final TaskRepository repository;
+
+  static final NormalPositional listName = NormalPositional(
+    'name',
+    description: 'Name for the new list.',
+    regExp: freeText,
+  );
+
+  @override
+  String get name => 'create';
+
+  @override
+  String get shortDescription => 'Create a task list.';
+
+  @override
+  String get longDescription =>
+      'Creates a task list. Names are unique, ignoring case and surrounding '
+      'spaces.';
+
+  @override
+  Future<String?> run(ParsedInputs inputs, List<String> args) =>
+      guardCommand(() async {
+        final book = await openTaskBook(repository: repository);
+        final list = await book.createList(inputs.valueOf(listName));
+        return 'Created list "${list.name}".';
+      });
+}
+
+/// Renames a list.
+final class ListsRename extends Command {
+  new(this.repository)
+      : super(mandatoryPositionals: [listName, replacementName]);
+
+  final TaskRepository repository;
+
+  static final NormalPositional listName = NormalPositional(
+    'list',
+    description: 'Name of the list to rename.',
+    regExp: freeText,
+  );
+
+  static final NormalPositional replacementName = NormalPositional(
+    'new-name',
+    description: 'The replacement name.',
+    regExp: freeText,
+  );
+
+  @override
+  String get name => 'rename';
+
+  @override
+  String get shortDescription => 'Rename a task list.';
+
+  @override
+  Future<String?> run(ParsedInputs inputs, List<String> args) =>
+      guardCommand(() async {
+        final book = await openTaskBook(repository: repository);
+        final previous = book.requireListByName(inputs.valueOf(listName));
+        final renamed = await book.renameList(
+          previous.id,
+          inputs.valueOf(replacementName),
+        );
+        return 'Renamed "${previous.name}" to "${renamed.name}".';
+      });
+}
+
+/// Removes a list and, with it, every task inside.
+final class ListsRm extends Command {
+  new(this.repository)
+      : super(mandatoryPositionals: [listName], flags: [force]);
+
+  final TaskRepository repository;
+
+  static final NormalPositional listName = NormalPositional(
+    'list',
+    description: 'Name of the list to remove.',
+    regExp: freeText,
+  );
+
+  static final BooleanFlag force = BooleanFlag(
+    'force',
+    short: 'f',
+    description: 'Confirm removal of a list that still holds tasks.',
+  );
+
+  @override
+  String get name => 'rm';
+
+  @override
+  String get shortDescription => 'Remove a task list and its tasks.';
+
+  @override
+  String get longDescription =>
+      'Removes a list together with every task in it. A list that still holds '
+      'tasks is only removed when --force is given, so a mistyped name cannot '
+      'discard work by accident.';
+
+  @override
+  Future<String?> run(ParsedInputs inputs, List<String> args) =>
+      guardCommand(() async {
+        final book = await openTaskBook(repository: repository);
+        final list = book.requireListByName(inputs.valueOf(listName));
+        final taskCount = list.tasks.length;
+        if (taskCount > 0 && !inputs.valueOf(force)) {
+          throw MambaException(
+            'List "${list.name}" still holds $taskCount '
+            '${taskCount == 1 ? 'task' : 'tasks'}. Re-run with --force to '
+            'remove the list and its tasks.',
+            exitCode: exitRejected,
+          );
+        }
+        await book.deleteList(list.id);
+        return taskCount == 0
+            ? 'Removed list "${list.name}".'
+            : 'Removed list "${list.name}" and $taskCount '
+                '${taskCount == 1 ? 'task' : 'tasks'}.';
       });
 }

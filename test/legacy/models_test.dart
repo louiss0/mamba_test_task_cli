@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:task_list_cli/models.dart';
+import 'package:task_list_cli/legacy/models.dart';
 import 'package:test/test.dart';
 
 const listId = '11111111-1111-4111-8111-111111111111';

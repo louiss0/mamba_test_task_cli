@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:mamba/mamba.dart';
 import 'package:path/path.dart' as p;
-import 'package:task_list_cli/path_command.dart';
+import 'package:task_list_cli/legacy/path_command.dart';
 import 'package:test/test.dart';
 
 void main() {

@@ -30,4 +30,8 @@ doc/api/
 
 # pubspec.lock is committed: an application pins its dependency versions.
 
+# Git worktrees nested inside this repository.
+/gpt-6.1-sol/
+/space-bunny-alpha/
+
 # End of https://www.toptal.com/developers/gitignore/api/dart

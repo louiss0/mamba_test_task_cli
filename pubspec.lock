@@ -185,14 +185,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.7"
-  dart_console:
-    dependency: transitive
-    description:
-      name: dart_console
-      sha256: dfa4b63eb4382325ff975fdb6b7a0db8303bb5809ee5cb4516b44153844742ed
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.2.0"
   dart_style:
     dependency: transitive
     description:
@@ -289,22 +281,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.10.1"
-  interact:
-    dependency: transitive
-    description:
-      name: interact
-      sha256: b1abf79334bec42e58496a054cb7ee7ca74da6181f6a1fb6b134f1aa22bc4080
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.2.0"
   intl:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: intl
-      sha256: "3bc132a9dbce73a7e4a21a17d06e1878839ffbf975568bc875c60537824b0c4d"
+      sha256: "1ca20c894b1717686a2319b8548763d812bc0aabdac580420a44c5178c57a867"
       url: "https://pub.dev"
     source: hosted
-    version: "0.18.1"
+    version: "0.20.3"
   io:
     dependency: transitive
     description:
@@ -349,10 +333,10 @@ packages:
     dependency: "direct main"
     description:
       name: mamba
-      sha256: "84a774b08a0cb655f3e2f8f650fe995aa10a16986482abe90e3cb305493c31e9"
+      sha256: "44c18a8d36a70bf4ca9f4e7a1c1cf1b10a79122e068ce74c44394922b576ad72"
       url: "https://pub.dev"
     source: hosted
-    version: "0.13.1"
+    version: "0.10.0"
   markdown:
     dependency: transitive
     description:
@@ -593,14 +577,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.6.20"
-  tint:
-    dependency: transitive
-    description:
-      name: tint
-      sha256: "9652d9a589f4536d5e392cf790263d120474f15da3cf1bee7f1fdb31b4de5f46"
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.0.1"
   typed_data:
     dependency: transitive
     description:
@@ -665,14 +641,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.2.1"
-  win32:
-    dependency: transitive
-    description:
-      name: win32
-      sha256: d7cb55e04cd34096cd3a79b3330245f54cb96a370a1c27adb3c84b917de8b08e
-      url: "https://pub.dev"
-    source: hosted
-    version: "5.15.0"
   yaml:
     dependency: transitive
     description:

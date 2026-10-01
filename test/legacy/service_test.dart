@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:task_list_cli/models.dart';
-import 'package:task_list_cli/repository.dart';
-import 'package:task_list_cli/service.dart';
+import 'package:task_list_cli/legacy/models.dart';
+import 'package:task_list_cli/legacy/repository.dart';
+import 'package:task_list_cli/legacy/service.dart';
 import 'package:test/test.dart';
 
 void main() {

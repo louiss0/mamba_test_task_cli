@@ -1,167 +1,372 @@
-import 'dart:convert';
-
 import 'package:mamba/mamba.dart';
 
-import 'models.dart';
-import 'path_command.dart';
+import 'application/open_task_book.dart';
+import 'cli/guard_command.dart';
+import 'cli/command_rules.dart';
+import 'domain/completion_filter.dart';
+import 'domain/task.dart';
+import 'domain/task_filter.dart';
+import 'domain/task_list.dart';
+import 'domain/validation.dart';
+import 'persistence/json_task_repository.dart';
+import 'presentation/table.dart';
+import 'presentation/timestamps.dart';
 
-final _list = NormalPositional(
-  'list',
-  regExp: RegExp(r'.+'),
-  description: 'List name or full ID.',
-);
-final _id = NormalPositional(
-  'id',
-  description: 'Full persistent task ID, not a row number.',
-);
-final _title = NormalPositional('title', regExp: RegExp(r'.+'));
-final _filter = ChoiceOption.withDefault(
-  'filter',
-  choices: TaskFilter.values,
-  defaultValue: TaskFilter.all,
-  short: 'f',
-  description: 'all, incomplete, or completed',
-);
-final _json = BooleanFlag('json', description: 'Emit JSON for scripts.');
-final _yes = BooleanFlag(
-  'yes',
-  short: 'y',
-  description: 'Confirm permanent task deletion.',
-);
+/// Owns the commands that manage tasks inside a list.
+final class TasksCommand extends GroupCommand {
+  new({TaskRepository? repository}) : super(_childrenOf(repository));
 
-final class Tasks extends GroupCommand {
-  new()
-    : super([
-        TaskShow(),
-        TaskAdd(),
-        TaskEdit(),
-        TaskComplete(),
-        TaskReopen(),
-        TaskDelete(),
-      ]);
   @override
   String get name => 'tasks';
+
   @override
-  String get shortDescription => 'Manage tasks in a named list.';
+  String get shortDescription => 'Add, edit, complete, and remove tasks.';
+
+  static List<Command> _childrenOf(TaskRepository? repository) {
+    final book = resolveRepository(repository);
+    return [
+      TasksLs(book),
+      TasksAdd(book),
+      TasksEdit(book),
+      TasksDone(book),
+      TasksUndone(book),
+      TasksRm(book),
+    ];
+  }
 }
 
-final class TaskShow extends Command {
-  new()
-    : super(mandatoryPositionals: [_list], options: [_filter], flags: [_json]);
+/// Prints the tasks of one list, optionally narrowed to one completion state.
+final class TasksLs extends Command {
+  new(this.repository)
+      : super(
+          mandatoryPositionals: [listName],
+          options: [filter],
+        );
+
+  final TaskRepository repository;
+
+  static final NormalPositional listName = NormalPositional(
+    'list',
+    description: 'Name of the list to read.',
+    regExp: freeText,
+  );
+
+  static final DefaultedOption<CompletionFilter> filter =
+      ChoiceOption.withDefault(
+    'filter',
+    choices: CompletionFilter.values,
+    defaultValue: CompletionFilter.all,
+    short: 'f',
+    description: 'Which completion states to include.',
+  );
+
   @override
-  String get name => 'show';
+  String get name => 'ls';
+
   @override
-  String get shortDescription =>
-      'Open a list; show tasks with a completion filter.';
+  String get shortDescription => 'Show the tasks in a list.';
+
   @override
-  Future<String?> run(
-    ParsedInputs inputs,
-    List<String> args,
-  ) => withService(inputs, (service) {
-    final list = service.getList(inputs.valueOf(_list));
-    final filter = inputs.valueOf(_filter);
-    final tasks = service.query(list.id, filter: filter);
-    if (inputs.valueOf(_json)) {
-      return jsonEncode({
-        'list': {'id': list.id, 'name': list.name},
-        'filter': filter.name,
-        'tasks': tasks
-            .map((task) => StoredTask.fromDomain(task).toJson())
-            .toList(),
+  Future<String?> run(ParsedInputs inputs, List<String> args) =>
+      guardCommand(() async {
+        final book = await openTaskBook(repository: repository);
+        final list = book.requireListByName(inputs.valueOf(listName));
+        final completion = inputs.valueOf(filter);
+        final tasks = book.queryTasks(
+          list.id,
+          TaskFilter.byCompletion(completion),
+        );
+        if (tasks.isEmpty) {
+          return _emptyMessage(list, completion);
+        }
+
+        return renderTable(
+          headings: const ['REF', 'STATUS', 'CREATED', 'TITLE'],
+          rows: [
+            for (final task in tasks)
+              [
+                task.reference,
+                task.completed ? 'done' : 'open',
+                formatTimestamp(task.createdAt),
+                task.title,
+              ],
+          ],
+        );
       });
+
+  String _emptyMessage(TaskList list, CompletionFilter completion) {
+    if (list.tasks.isEmpty) {
+      return 'List "${list.name}" has no tasks.\n'
+          'Add one with: task_list tasks add ${list.name} <title>';
     }
-    final heading = '${list.name} | ${filter.label} | ${tasks.length} tasks';
-    if (tasks.isEmpty) {
-      return '$heading\nNo matching tasks. Add one with: tasks add "${list.name}" "Task title"';
-    }
-    return '$heading\n${tasks.map((task) => '${task.id}\t[${task.completed ? 'x' : ' '}]\t${task.title}').join('\n')}';
-  });
+    return switch (completion) {
+      CompletionFilter.all => 'List "${list.name}" has no tasks.',
+      CompletionFilter.incomplete => 'List "${list.name}" has no incomplete '
+          'tasks.\nRun with --filter completed to see the finished ones.',
+      CompletionFilter.completed => 'List "${list.name}" has no completed '
+          'tasks.\nRun with --filter incomplete to see what is left.',
+    };
+  }
 }
 
-final class TaskAdd extends Command {
-  new() : super(mandatoryPositionals: [_list, _title]);
+/// Adds a task to a list.
+final class TasksAdd extends Command {
+  new(this.repository)
+      : super(
+          mandatoryPositionals: [listName, firstWord],
+          variadic: rest,
+        );
+
+  final TaskRepository repository;
+
+  static final NormalPositional listName = NormalPositional(
+    'list',
+    description: 'Name of the list to add to.',
+    regExp: freeText,
+  );
+
+  static final NormalPositional firstWord = NormalPositional(
+    'title',
+    description: 'The task title. Quote it to include spaces.',
+    regExp: freeText,
+  );
+
+  static final NormalVariadic rest = NormalVariadic(
+    description: 'Words after -- , for a title that starts with a dash.',
+    regExp: freeText,
+  );
+
   @override
   String get name => 'add';
+
   @override
-  String get shortDescription => 'Add a task and print its persistent ID.';
+  String get shortDescription => 'Add a task to a list.';
+
   @override
-  Future<String?> run(ParsedInputs inputs, List<String> args) => withService(
-    inputs,
-    (service) async => (await service.createTask(
-      inputs.valueOf(_list),
-      inputs.valueOf(_title),
-    )).id,
+  String get longDescription =>
+      'Adds an incomplete task. Quote the title so spaces are kept: '
+      'task_list tasks add Work "Buy milk". A title that begins with a dash '
+      'goes after a -- separator.';
+
+  @override
+  Future<String?> run(ParsedInputs inputs, List<String> args) =>
+      guardCommand(() async {
+        final book = await openTaskBook(repository: repository);
+        final list = book.requireListByName(inputs.valueOf(listName));
+        final task = await book.addTask(
+          list.id,
+          joinTitle(inputs.valueOf(firstWord), args),
+        );
+        return 'Added "${task.title}" to "${list.name}" '
+            '[ref ${task.reference}].';
+      });
+}
+
+/// Changes the title of a task.
+final class TasksEdit extends Command {
+  new(this.repository)
+      : super(
+          mandatoryPositionals: [listName, reference, firstWord],
+          variadic: rest,
+        );
+
+  final TaskRepository repository;
+
+  static final NormalPositional listName = NormalPositional(
+    'list',
+    description: 'Name of the list holding the task.',
+    regExp: freeText,
+  );
+
+  static final NormalPositional reference = NormalPositional(
+    'ref',
+    description: 'Task reference shown by "tasks ls".',
+  );
+
+  static final NormalPositional firstWord = NormalPositional(
+    'title',
+    description: 'The replacement title.',
+    regExp: freeText,
+  );
+
+  static final NormalVariadic rest = NormalVariadic(
+    description: 'Words after -- , for a title that starts with a dash.',
+    regExp: freeText,
+  );
+
+  @override
+  String get name => 'edit';
+
+  @override
+  String get shortDescription => 'Change a task title.';
+
+  @override
+  String get longDescription =>
+      'Changes the title of the task named by its reference. Quote the new '
+      'title so spaces are kept: task_list tasks edit Work <ref> "New title".';
+
+  @override
+  Future<String?> run(ParsedInputs inputs, List<String> args) =>
+      guardCommand(() async {
+        final book = await openTaskBook(repository: repository);
+        final list = book.requireListByName(inputs.valueOf(listName));
+        final task = resolveTask(list, inputs.valueOf(reference));
+        final updated = await book.editTask(
+          list.id,
+          task.id,
+          joinTitle(inputs.valueOf(firstWord), args),
+        );
+        return 'Renamed task ${updated.reference} to "${updated.title}".';
+      });
+}
+
+/// Marks a task complete.
+final class TasksDone extends Command {
+  new(this.repository) : super(mandatoryPositionals: [listName, reference]);
+
+  final TaskRepository repository;
+
+  static final NormalPositional listName = NormalPositional(
+    'list',
+    description: 'Name of the list holding the task.',
+    regExp: freeText,
+  );
+
+  static final NormalPositional reference = NormalPositional(
+    'ref',
+    description: 'Task reference shown by "tasks ls".',
+  );
+
+  @override
+  String get name => 'done';
+
+  @override
+  String get shortDescription => 'Mark a task complete.';
+
+  @override
+  Future<String?> run(ParsedInputs inputs, List<String> args) =>
+      guardCommand(() async {
+        final book = await openTaskBook(repository: repository);
+        final list = book.requireListByName(inputs.valueOf(listName));
+        final task = resolveTask(list, inputs.valueOf(reference));
+        final updated = await book.setTaskCompleted(list.id, task.id, true);
+        return 'Marked "${updated.title}" complete.';
+      });
+}
+
+/// Marks a completed task incomplete again.
+final class TasksUndone extends Command {
+  new(this.repository) : super(mandatoryPositionals: [listName, reference]);
+
+  final TaskRepository repository;
+
+  static final NormalPositional listName = NormalPositional(
+    'list',
+    description: 'Name of the list holding the task.',
+    regExp: freeText,
+  );
+
+  static final NormalPositional reference = NormalPositional(
+    'ref',
+    description: 'Task reference shown by "tasks ls".',
+  );
+
+  @override
+  String get name => 'undone';
+
+  @override
+  String get shortDescription => 'Reopen a completed task.';
+
+  @override
+  Future<String?> run(ParsedInputs inputs, List<String> args) =>
+      guardCommand(() async {
+        final book = await openTaskBook(repository: repository);
+        final list = book.requireListByName(inputs.valueOf(listName));
+        final task = resolveTask(list, inputs.valueOf(reference));
+        final updated = await book.setTaskCompleted(list.id, task.id, false);
+        return 'Marked "${updated.title}" incomplete.';
+      });
+}
+
+/// Deletes a task.
+final class TasksRm extends Command {
+  new(this.repository)
+      : super(mandatoryPositionals: [listName, reference], flags: [force]);
+
+  final TaskRepository repository;
+
+  static final NormalPositional listName = NormalPositional(
+    'list',
+    description: 'Name of the list holding the task.',
+    regExp: freeText,
+  );
+
+  static final NormalPositional reference = NormalPositional(
+    'ref',
+    description: 'Task reference shown by "tasks ls".',
+  );
+
+  static final BooleanFlag force = BooleanFlag(
+    'force',
+    short: 'f',
+    description: 'Confirm the deletion.',
+  );
+
+  @override
+  String get name => 'rm';
+
+  @override
+  String get shortDescription => 'Delete a task.';
+
+  @override
+  String get longDescription =>
+      'Deletes one task for good. --force has to be given to confirm, so a '
+      'mistyped reference cannot discard work without a second deliberate '
+      'act. Scripts pass it too.';
+
+  @override
+  Future<String?> run(ParsedInputs inputs, List<String> args) =>
+      guardCommand(() async {
+        final book = await openTaskBook(repository: repository);
+        final list = book.requireListByName(inputs.valueOf(listName));
+        final task = resolveTask(list, inputs.valueOf(reference));
+        if (!inputs.valueOf(force)) {
+          throw MambaException(
+            'Task ${task.reference} "${task.title}" will be deleted for good. '
+            'Re-run with --force to confirm.',
+            exitCode: exitRejected,
+          );
+        }
+        await book.deleteTask(list.id, task.id);
+        return 'Deleted task ${task.reference} "${task.title}".';
+      });
+}
+
+/// Resolves a CLI reference to exactly one task in [list].
+///
+/// A reference is any unambiguous leading part of a task identifier. An
+/// ambiguous one is rejected instead of guessed, because completing the wrong
+/// task is worse than refusing.
+Task resolveTask(TaskList list, String reference) {
+  final task = list.taskByReference(reference);
+  if (task != null) return task;
+
+  final matches = list.countReferenceMatches(reference);
+  if (matches > 1) {
+    throw ValidationException(
+      '"$reference" matches $matches tasks in "${list.name}". '
+      'Use more of the reference shown by "task_list tasks ls ${list.name}".',
+    );
+  }
+  throw NotFoundException(
+    'List "${list.name}" has no task with reference "$reference". '
+    'Run "task_list tasks ls ${list.name}" to see the references.',
   );
 }
 
-final class TaskEdit extends Command {
-  new() : super(mandatoryPositionals: [_list, _id, _title]);
-  @override
-  String get name => 'edit';
-  @override
-  String get shortDescription => 'Change a task title.';
-  @override
-  Future<String?> run(ParsedInputs inputs, List<String> args) =>
-      withService(inputs, (service) async {
-        await service.editTask(
-          inputs.valueOf(_list),
-          inputs.valueOf(_id),
-          inputs.valueOf(_title),
-        );
-        return 'Task updated.';
-      });
-}
-
-final class TaskComplete extends Command {
-  new() : super(mandatoryPositionals: [_list, _id]);
-  @override
-  String get name => 'complete';
-  @override
-  String get shortDescription => 'Mark a task completed without deleting it.';
-  @override
-  Future<String?> run(ParsedInputs inputs, List<String> args) =>
-      withService(inputs, (service) async {
-        await service.setCompletion(
-          inputs.valueOf(_list),
-          inputs.valueOf(_id),
-          Completion.completed,
-        );
-        return 'Task completed.';
-      });
-}
-
-final class TaskReopen extends Command {
-  new() : super(mandatoryPositionals: [_list, _id]);
-  @override
-  String get name => 'reopen';
-  @override
-  String get shortDescription => 'Mark a completed task incomplete again.';
-  @override
-  Future<String?> run(ParsedInputs inputs, List<String> args) =>
-      withService(inputs, (service) async {
-        await service.setCompletion(
-          inputs.valueOf(_list),
-          inputs.valueOf(_id),
-          Completion.incomplete,
-        );
-        return 'Task reopened.';
-      });
-}
-
-final class TaskDelete extends Command {
-  new() : super(mandatoryPositionals: [_list, _id], flags: [_yes]);
-  @override
-  String get name => 'delete';
-  @override
-  String get shortDescription => 'Permanently delete a task (requires --yes).';
-  @override
-  Future<String?> run(ParsedInputs inputs, List<String> args) =>
-      withService(inputs, (service) async {
-        await service.deleteTask(
-          inputs.valueOf(_list),
-          inputs.valueOf(_id),
-          confirmed: inputs.valueOf(_yes),
-        );
-        return 'Task deleted.';
-      });
-}
+/// Joins the title positional with any words that followed a `--` separator.
+///
+/// A title is normally one quoted argument. The separator exists for a title
+/// that begins with a dash and would otherwise be read as a flag.
+String joinTitle(String firstWord, List<String> rest) =>
+    rest.isEmpty ? firstWord : '$firstWord ${rest.join(' ')}';

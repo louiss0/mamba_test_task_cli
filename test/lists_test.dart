@@ -1,178 +1,277 @@
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:mamba/mamba.dart';
+import 'package:task_list_cli/application/task_book.dart';
+import 'package:task_list_cli/domain/id_source.dart';
 import 'package:task_list_cli/lists.dart';
-import 'package:task_list_cli/path_command.dart';
-import 'package:task_list_cli/repository.dart';
-import 'package:task_list_cli/service.dart';
+import 'package:task_list_cli/persistence/in_memory_task_repository.dart';
 import 'package:test/test.dart';
 
+import 'support/test_workspace.dart';
+
 void main() {
-  late Directory directory;
-  setUp(
-    () async =>
-        directory = await Directory.systemTemp.createTemp('task-lists-cli-'),
-  );
-  tearDown(() async => directory.delete(recursive: true));
-  Future<MambaExecutionResult> invoke(List<String> args) => Executor(
-    'task_list_cli',
-    'Tasks',
-    '1.0.0',
-    [Lists()],
-    options: [dataDirectory],
-  ).fake().execute(['--data-dir', directory.path, ...args]);
-  Future<String> seed(String name, {bool withTask = false}) async {
-    final repo = await JsonRepository.open(directory.path);
-    try {
-      final service = TaskService(repo);
-      final list = await service.createList(name);
-      if (withTask) await service.createTask(list.id, 'Important task');
-      return list.id;
-    } finally {
-      await repo.close();
+  late InMemoryTaskRepository repository;
+  late IdSource ids;
+
+  setUp(() {
+    repository = InMemoryTaskRepository();
+    ids = deterministicIds();
+  });
+
+  MambaExecutor<MambaExecutionResult> cli() => Executor(
+        'task_list',
+        'Manage persistent task lists.',
+        '1.0.0',
+        [ListsCommand(repository: repository)],
+      ).fake();
+
+  /// Runs [tokens] and returns the result, for the common success case.
+  Future<MambaExecutionResult> run(List<String> tokens) => cli().execute(tokens);
+
+  /// Seeds a list, optionally with tasks, and returns the book.
+  ///
+  /// One identifier source is shared by every call so two seeded lists never
+  /// collide on an id.
+  Future<TaskBook> seed(String name, {List<String> tasks = const []}) async {
+    final book = TaskBook(repository, ids: ids);
+    await book.load();
+    final list = await book.createList(name);
+    for (final title in tasks) {
+      await book.addTask(list.id, title);
     }
+    return book;
   }
 
-  void success(MambaExecutionResult result, Object? output) => expect(
-    result,
-    isA<MambaSuccessResult>()
-        .having((r) => r.exitCode, 'exit code', 0)
-        .having((r) => r.output, 'output', output),
-  );
-  void failure(
-    MambaExecutionResult result,
-    Object message,
-    String command, {
-    MambaExecutionPhase phase = MambaExecutionPhase.run,
-  }) => expect(
-    result,
-    isA<MambaFailureResult>()
-        .having((r) => r.exitCode, 'exit code', 1)
-        .having((r) => r.message, 'message', message)
-        .having((r) => r.output, 'output', isNull)
-        .having((r) => r.errors, 'errors', hasLength(1))
-        .having((r) => r.errors.single.phase, 'phase', phase)
-        .having((r) => r.errors.single.commandPath, 'path', [
-          'task_list_cli',
-          'lists',
-          command,
-        ]),
-  );
+  Matcher succeeds(Object? output) => isA<MambaSuccessResult>()
+      .having((value) => value.exitCode, 'exit code', 0)
+      .having((value) => value.output, 'output', output);
 
-  group('task_list_cli', () {
-    group('lists', () {
-      test('help lists every child without opening storage', () async {
-        success(
-          await invoke(['lists', '--help']),
-          allOf(
-            contains('show'),
-            contains('add'),
-            contains('rename'),
-            contains('delete'),
+  Matcher fails({
+    required int exitCode,
+    required Object message,
+    required MambaExecutionPhase phase,
+    required List<String> commandPath,
+  }) =>
+      isA<MambaFailureResult>()
+          .having((value) => value.exitCode, 'exit code', exitCode)
+          .having((value) => value.message, 'message', message)
+          .having((value) => value.output, 'output', isNull)
+          .having((value) => value.errors, 'errors', hasLength(1))
+          .having((value) => value.errors.single.phase, 'phase', phase)
+          .having(
+            (value) => value.errors.single.commandPath,
+            'command path',
+            commandPath,
+          );
+
+  group('lists', () {
+    test('shows its child commands', () async {
+      final result = await run(['lists', '--help']);
+
+      expect(
+        result,
+        succeeds(
+          allOf(contains('create'), contains('rename'), contains('rm')),
+        ),
+      );
+    });
+
+    group('ls', () {
+      test('explains what to do when there are no lists', () async {
+        final result = await run(['lists', 'ls']);
+
+        expect(
+          result,
+          succeeds(
+            allOf(
+              contains('No lists yet'),
+              contains('task_list lists create'),
+            ),
           ),
         );
-        expect(await directory.list().toList(), isEmpty);
       });
-      group('show', () {
-        test('explains empty state and emits an empty JSON array', () async {
-          success(
-            await invoke(['lists', 'show']),
-            'No lists yet. Create one with: lists add "Personal"',
-          );
-          success(await invoke(['lists', 'show', '--json']), '[]');
-        });
-        test('shows persistent IDs, names and counts', () async {
-          final id = await seed('Work', withTask: true);
-          success(await invoke(['lists', 'show']), '$id\tWork\t1 tasks');
-          success(
-            await invoke(['lists', 'show', '--json']),
-            jsonEncode([
-              {'id': id, 'name': 'Work', 'taskCount': 1},
-            ]),
-          );
-        });
-      });
-      group('add', () {
-        test(
-          'accepts a quoted multi-word name and returns a persistent UUID',
-          () async {
-            final result = await invoke(['lists', 'add', 'Big project']);
-            success(result, matches(RegExp(r'^[a-f0-9-]{36}$')));
-            final repo = await JsonRepository.open(directory.path);
-            try {
-              expect(repo.initialState.lists.single.name, 'Big project');
-              expect(
-                repo.initialState.lists.single.id,
-                (result as MambaSuccessResult).output,
-              );
-            } finally {
-              await repo.close();
-            }
-          },
+
+      test('lists each name with its task counts', () async {
+        await seed('Work', tasks: ['One', 'Two']);
+
+        final result = await run(['lists', 'ls']);
+
+        expect(
+          result,
+          succeeds(allOf(contains('NAME'), contains('Work'), contains('2'))),
         );
-        test(
-          'rejects duplicate names without changing existing lists',
-          () async {
-            await seed('Work');
-            failure(
-              await invoke(['lists', 'add', 'work']),
-              'A list named "work" already exists (names ignore case).',
-              'add',
-            );
-          },
+      });
+
+      test('separates open and done counts', () async {
+        final book = await seed('Work', tasks: ['One', 'Two']);
+        final list = book.requireListByName('Work');
+        await book.setTaskCompleted(list.id, list.tasks.first.id, true);
+
+        final result = await run(['lists', 'ls']);
+
+        expect(
+          result,
+          succeeds(
+            allOf(
+              contains('TASKS'),
+              contains('OPEN'),
+              contains('DONE'),
+              // Two tasks in total, one finished, so one still open.
+              contains(RegExp(r'Work\s+2\s+1\s+1')),
+            ),
+          ),
         );
-        test('requires a list name', () async {
-          failure(
-            await invoke(['lists', 'add']),
-            'The name is required at 0 after this command',
-            'add',
-            phase: MambaExecutionPhase.parse,
-          );
-        });
-        test('rejects blank names at the domain boundary', () async {
-          failure(
-            await invoke(['lists', 'add', ' ']),
-            'List name must contain 1–80 characters without control characters.',
-            'add',
-          );
-        });
       });
-      group('rename', () {
-        test('renames by ID and preserves it', () async {
-          final id = await seed('Work');
-          success(
-            await invoke(['lists', 'rename', id, 'Projects']),
-            'List renamed.',
-          );
-          success(await invoke(['lists', 'show']), '$id\tProjects\t0 tasks');
-        });
-        test('reports missing lists', () async {
-          failure(
-            await invoke(['lists', 'rename', 'Missing', 'New']),
-            'List "Missing" does not exist. Use "lists show" or create it first.',
-            'rename',
-          );
-        });
+    });
+
+    group('create', () {
+      test('creates a list', () async {
+        final result = await run(['lists', 'create', 'Work']);
+
+        expect(result, succeeds('Created list "Work".'));
       });
-      group('delete', () {
-        test('deletes an empty list without confirmation', () async {
-          await seed('Work');
-          success(await invoke(['lists', 'delete', 'work']), 'List deleted.');
-          success(await invoke(['lists', 'show', '--json']), '[]');
-        });
-        test('protects nonempty lists until --yes is supplied', () async {
-          await seed('Work', withTask: true);
-          failure(
-            await invoke(['lists', 'delete', 'Work']),
-            'List "Work" contains 1 tasks. Confirm deletion with --yes.',
-            'delete',
-          );
-          success(
-            await invoke(['lists', 'delete', 'Work', '--yes']),
-            'List deleted.',
-          );
-        });
+
+      test('trims the name', () async {
+        final result = await run(['lists', 'create', '  Work  ']);
+
+        expect(result, succeeds('Created list "Work".'));
+      });
+
+      test('rejects a duplicate name', () async {
+        await seed('Work');
+
+        final result = await run(['lists', 'create', 'work']);
+
+        expect(
+          result,
+          fails(
+            exitCode: 4,
+            message: 'A list named "work" already exists.',
+            phase: MambaExecutionPhase.run,
+            commandPath: ['task_list', 'lists', 'create'],
+          ),
+        );
+      });
+
+      test('rejects an empty name', () async {
+        final result = await run(['lists', 'create', '   ']);
+
+        expect(
+          result,
+          fails(
+            exitCode: 4,
+            message: 'A list name cannot be empty.',
+            phase: MambaExecutionPhase.run,
+            commandPath: ['task_list', 'lists', 'create'],
+          ),
+        );
+      });
+
+      test('requires a name', () async {
+        final result = await run(['lists', 'create']);
+
+        expect(result, isA<MambaFailureResult>());
+      });
+    });
+
+    group('rename', () {
+      test('renames a list, ignoring the case it was asked for', () async {
+        await seed('Work');
+
+        final result = await run(['lists', 'rename', 'work', 'Office']);
+
+        expect(result, succeeds('Renamed "Work" to "Office".'));
+      });
+
+      test('reports an unknown list', () async {
+        final result = await run(['lists', 'rename', 'Nope', 'Office']);
+
+        expect(
+          result,
+          fails(
+            exitCode: 3,
+            message: allOf(contains('No list named "Nope"')),
+            phase: MambaExecutionPhase.run,
+            commandPath: ['task_list', 'lists', 'rename'],
+          ),
+        );
+      });
+
+      test('rejects a name already in use', () async {
+        await seed('Work');
+        await seed('Office');
+
+        final result = await run(['lists', 'rename', 'Work', 'office']);
+
+        expect(
+          result,
+          fails(
+            exitCode: 4,
+            message: 'A list named "office" already exists.',
+            phase: MambaExecutionPhase.run,
+            commandPath: ['task_list', 'lists', 'rename'],
+          ),
+        );
+      });
+    });
+
+    group('rm', () {
+      test('removes an empty list without asking for force', () async {
+        await seed('Work');
+
+        final result = await run(['lists', 'rm', 'Work']);
+
+        expect(result, succeeds('Removed list "Work".'));
+      });
+
+      test('refuses to drop a list that still holds tasks', () async {
+        await seed('Work', tasks: ['One']);
+
+        final result = await run(['lists', 'rm', 'Work']);
+
+        expect(
+          result,
+          fails(
+            exitCode: 4,
+            message: allOf(
+              contains('still holds 1 task'),
+              contains('--force'),
+            ),
+            phase: MambaExecutionPhase.run,
+            commandPath: ['task_list', 'lists', 'rm'],
+          ),
+        );
+      });
+
+      test('removes a list with its tasks when forced', () async {
+        await seed('Work', tasks: ['One', 'Two']);
+
+        final result = await run(['lists', 'rm', 'Work', '--force']);
+
+        expect(
+          result,
+          succeeds('Removed list "Work" and 2 tasks.'),
+        );
+      });
+
+      test('accepts the short force flag', () async {
+        await seed('Work', tasks: ['One']);
+
+        final result = await run(['lists', 'rm', 'Work', '-f']);
+
+        expect(result, succeeds('Removed list "Work" and 1 task.'));
+      });
+
+      test('reports an unknown list', () async {
+        final result = await run(['lists', 'rm', 'Nope']);
+
+        expect(
+          result,
+          fails(
+            exitCode: 3,
+            message: contains('No list named "Nope"'),
+            phase: MambaExecutionPhase.run,
+            commandPath: ['task_list', 'lists', 'rm'],
+          ),
+        );
       });
     });
   });

@@ -1,17 +1,19 @@
 name: task_list_cli
-description: A persistent JSON-backed task manager with a Nocterm terminal UI.
+description: 'A persistent task list manager with a CLI and an interactive TUI.'
 version: 1.0.0
-executables:
-  task_list_cli: task_list_cli
+
 environment:
   sdk: ^3.13.2
+
 dependencies:
   app_dirs: ^0.2.0
+  intl: ^0.20.2
   json_annotation: ^4.12.0
-  mamba: ^0.13.1
+  mamba: ^0.10.0
   nocterm: ^0.9.0
   path: ^1.9.1
   uuid: ^4.6.0
+
 dev_dependencies:
   build_runner: ^2.16.1
   json_serializable: ^6.14.1

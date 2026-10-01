@@ -2,9 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:task_list_cli/models.dart';
-import 'package:task_list_cli/repository.dart';
-import 'package:task_list_cli/service.dart';
+import 'package:task_list_cli/legacy/models.dart';
+import 'package:task_list_cli/legacy/repository.dart';
+import 'package:task_list_cli/legacy/service.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -180,7 +180,7 @@ void main() {
       final first = await open();
       final result = await Process.run(Platform.resolvedExecutable, [
         'run',
-        'bin/task_list_cli.dart',
+        'bin/task_list_legacy.dart',
         '--data-dir',
         directory.path,
         'lists',
