@@ -1,5 +1,10 @@
+import 'dart:io';
+
 import 'package:nocterm/nocterm.dart' hide isEmpty;
 import 'package:task_list_cli/application/task_book.dart';
+import 'package:task_list_cli/domain/id_source.dart';
+import 'package:task_list_cli/domain/task_book_state.dart';
+import 'package:task_list_cli/persistence/corrupted_book_exception.dart';
 import 'package:task_list_cli/persistence/in_memory_task_repository.dart';
 import 'package:task_list_cli/presentation/theme.dart';
 import 'package:task_list_cli/tui/shortcuts.dart';
@@ -13,10 +18,11 @@ void main() {
   late CountingRepository repository;
   late TaskBook book;
   late TaskScreen screen;
+  late IdSource ids;
 
   setUp(() async {
     repository = CountingRepository(InMemoryTaskRepository());
-    book = TaskBook(repository, ids: deterministicIds());
+    book = TaskBook(repository, ids: ids = deterministicIds());
     await book.load();
     screen = TaskScreen(book);
   });
@@ -499,6 +505,125 @@ void main() {
           reopened.requireListByName('Work').tasks.single.title,
           'Ship it',
         );
+      });
+    });
+  });
+
+  group('failures the interface has to survive', () {
+    /// Opens a screen over a book whose writes always fail with [error].
+    Future<TaskScreen> failingScreen(Object error) async {
+      final starter = TaskBook(InMemoryTaskRepository(), ids: ids);
+      await starter.load();
+      final list = await starter.createList('Work');
+      await starter.addTask(list.id, 'Buy milk');
+      final saved = starter.state;
+
+      final failing = TaskBook(
+        FailingRepository(error, saved),
+        ids: ids,
+      );
+      await failing.load();
+      return TaskScreen(failing);
+    }
+
+    test('unreadable saved data is explained in full', () async {
+      await testNocterm('corrupted data', (tester) async {
+        screen = await failingScreen(
+          CorruptedBookException(
+            path: '/data/task_book.json',
+            reason: 'The file is not valid JSON.',
+          ),
+        );
+        await boot(tester);
+
+        await press(tester, Action.toggleDone);
+        await tester.pump(const Duration(milliseconds: 30));
+
+        expect(tester.terminalState, containsText('Saved data cannot be read'));
+        expect(
+          tester.terminalState,
+          containsText('/data/task_book.json'),
+          reason: 'the user has to be able to find the file',
+        );
+        expect(tester.terminalState, containsText('Press any key to continue'));
+      });
+    });
+
+    test('a file it cannot write says the change was not saved', () async {
+      await testNocterm('failed write', (tester) async {
+        screen = await failingScreen(
+          FileSystemException('disk full', '/data/task_book.json'),
+        );
+        await boot(tester);
+
+        await press(tester, Action.toggleDone);
+        await tester.pump(const Duration(milliseconds: 30));
+
+        expect(tester.terminalState, containsText('Cannot save the data file'));
+        expect(tester.terminalState, containsText('not saved'));
+      });
+    });
+
+    test('the interface keeps working after a failure', () async {
+      await testNocterm('recovers', (tester) async {
+        screen = await failingScreen(
+          CorruptedBookException(path: '/data/task_book.json', reason: 'bad'),
+        );
+        await boot(tester);
+
+        await press(tester, Action.toggleDone);
+        await tester.pump(const Duration(milliseconds: 30));
+        expect(tester.terminalState, containsText('cannot be read'));
+
+        await pressBare(tester, LogicalKey.escape);
+        await tester.pump();
+        expect(tester.terminalState, isNot(containsText('Press any key')));
+
+        // The task is untouched and the screen still draws and navigates.
+        expect(tester.terminalState, containsText('Buy milk'));
+        expect(screen.selectedTask?.title, 'Buy milk');
+        await press(tester, Action.moveDown);
+        expect(tester.terminalState, containsText('Buy milk'));
+      });
+    });
+
+    test('a selection that another book removed is reported, not fatal',
+        () async {
+      await testNocterm('stale selection', (tester) async {
+        final starter = TaskBook(InMemoryTaskRepository(), ids: ids);
+        await starter.load();
+        final list = await starter.createList('Work');
+        await starter.addTask(list.id, 'Buy milk');
+
+        // This instance loaded a book that still has the list; the file has
+        // since lost it.
+        final diverging = TaskBook(
+          DivergingRepository(
+            loaded: starter.state,
+            onDisk: TaskBookState.empty,
+          ),
+          ids: ids,
+        );
+        await diverging.load();
+        screen = TaskScreen(diverging);
+        await boot(tester);
+        expect(screen.selectedTask?.title, 'Buy milk');
+
+        await press(tester, Action.toggleDone);
+        await tester.pump(const Duration(milliseconds: 30));
+
+        expect(tester.terminalState, containsText('No longer there'));
+        expect(
+          screen.selectedTask?.completed,
+          isFalse,
+          reason: 'a change that could not be saved must not look applied',
+        );
+
+        // Dismissing leaves a usable screen rather than a blank one.
+        await pressBare(tester, LogicalKey.escape);
+        await tester.pump();
+        expect(tester.terminalState, containsText('Buy milk'));
+        expect(screen.status, 'No longer there');
       });
     });
   });

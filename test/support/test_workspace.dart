@@ -71,3 +71,48 @@ final class CountingRepository implements TaskRepository {
     return _inner.update(change);
   }
 }
+
+/// A repository that fails every write with [error].
+///
+/// This stands in for the failures an interactive session has to survive:
+/// unreadable saved data, or a file it cannot write. Nothing should reach the
+/// terminal as an unhandled error.
+final class FailingRepository implements TaskRepository {
+  FailingRepository([
+    this.error = 'the disk is unavailable',
+    TaskBookState? initial,
+  ]) : _state = initial ?? TaskBookState.empty;
+
+  final Object error;
+  final TaskBookState _state;
+
+  @override
+  Future<TaskBookState> load() async => _state;
+
+  @override
+  Future<TaskBookState> update(
+    TaskBookState Function(TaskBookState current) change,
+  ) async =>
+      throw error;
+}
+
+/// A repository whose file has moved on since it was loaded.
+///
+/// `load` returns [loaded], but every write is applied to [onDisk]. That is
+/// exactly what a second instance does to this one, and it is how the tests
+/// reproduce a selection that no longer exists by the time it is acted on.
+final class DivergingRepository implements TaskRepository {
+  DivergingRepository({required this.loaded, required this.onDisk});
+
+  final TaskBookState loaded;
+  final TaskBookState onDisk;
+
+  @override
+  Future<TaskBookState> load() async => loaded;
+
+  @override
+  Future<TaskBookState> update(
+    TaskBookState Function(TaskBookState current) change,
+  ) async =>
+      change(onDisk);
+}

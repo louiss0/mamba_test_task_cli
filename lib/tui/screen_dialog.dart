@@ -62,3 +62,17 @@ final class ConfirmDialog extends ScreenDialog {
 final class HelpDialog extends ScreenDialog {
   const HelpDialog();
 }
+
+/// Explains a failure in full, for problems too long to read in the status bar.
+///
+/// Storage failures carry a file path and recovery steps, so they are presented
+/// as something the user dismisses rather than a line that scrolls past.
+final class MessageDialog extends ScreenDialog {
+  const MessageDialog({required this.title, required this.body});
+
+  /// The one-line summary, repeated at the top of the box.
+  final String title;
+
+  /// The full explanation, one entry per line.
+  final List<String> body;
+}

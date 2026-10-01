@@ -11,6 +11,7 @@ import '../domain/task_list.dart';
 import '../domain/validation.dart';
 import '../presentation/timestamps.dart';
 import 'components.dart';
+import 'failure.dart';
 import 'pane.dart';
 import 'screen_dialog.dart';
 import 'shortcuts.dart';
@@ -152,6 +153,7 @@ class _TaskListAppState extends State<TaskListApp> {
         if (confirmed) _run(dialog.onConfirm);
         return true;
       case HelpDialog():
+      case MessageDialog():
         _closeDialog();
         return true;
     }
@@ -266,6 +268,12 @@ class _TaskListAppState extends State<TaskListApp> {
     _runDialogAction(action, closeOnSuccess: _dialog == null);
   }
 
+  /// Runs an action whose failures must never reach the terminal unhandled.
+  ///
+  /// A key press runs the application layer on a detached future, so nothing
+  /// else stands between a rejected change and an unhandled async error. Every
+  /// failure is therefore turned into something the user can read, and the
+  /// screen is left in a usable state afterwards.
   void _runDialogAction(
     Future<void> Function() action, {
     required bool closeOnSuccess,
@@ -274,13 +282,38 @@ class _TaskListAppState extends State<TaskListApp> {
       try {
         await action();
       } on ValidationException catch (error) {
+        // A rejected value belongs in the dialog that asked for it, so the
+        // user can correct it without retyping everything.
         if (mounted) setState(() => _dialogError = error.message);
+        return;
+      } on Object catch (error) {
+        _reportFailure(error);
         return;
       }
       if (!mounted) return;
       if (closeOnSuccess) _closeDialog();
       _afterChange();
     }());
+  }
+
+  /// Shows a failure and re-settles the selection around it.
+  ///
+  /// A change can fail because the book moved on without this instance, for
+  /// example when another process removed the selected task. Reconciling here
+  /// means the screen lands on whatever still exists instead of pointing at
+  /// something that is gone.
+  void _reportFailure(Object error) {
+    if (!mounted) return;
+    final failure = describeFailure(error);
+    setState(() {
+      _screen.report(failure.title);
+      _screen.reconcile();
+      _dialog = failure.needsReading
+          ? MessageDialog(title: failure.title, body: failure.detail.split('\n'))
+          : _dialog;
+      _dialogError = failure.needsReading ? null : failure.detail;
+    });
+    _revealSelection();
   }
 
   void _afterChange() {
@@ -530,6 +563,7 @@ class _TaskListAppState extends State<TaskListApp> {
               PromptDialog() => _promptDialog(theme, dialog),
               ConfirmDialog() => _confirmDialog(theme, dialog),
               HelpDialog() => _helpDialog(theme),
+              MessageDialog() => _messageDialog(theme, dialog),
             },
           ),
         ],
@@ -600,6 +634,31 @@ class _TaskListAppState extends State<TaskListApp> {
           const SizedBox(height: 1),
           singleLine(
             '${dialog.confirmLabel} with Enter or y  |  any key cancels',
+            style: TextStyle(
+              color: theme.secondary,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ],
+      );
+
+  Component _messageDialog(TuiThemeData theme, MessageDialog dialog) =>
+      dialogBox(
+        title: dialog.title,
+        borderColor: theme.error,
+        background: theme.surface,
+        innerWidth: _innerWidth,
+        titleStyle: TextStyle(color: theme.error, fontWeight: FontWeight.bold),
+        body: [
+          const SizedBox(height: 1),
+          for (final line in dialog.body)
+            singleLine(
+              line,
+              style: line.isEmpty ? null : TextStyle(color: theme.onSurface),
+            ),
+          const SizedBox(height: 1),
+          singleLine(
+            ' Press any key to continue',
             style: TextStyle(
               color: theme.secondary,
               fontStyle: FontStyle.italic,
