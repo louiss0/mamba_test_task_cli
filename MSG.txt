@@ -1,13 +1,13 @@
-fix(tui): keep the selected task when a filter narrows the view
-# Selection is an identity, so changing the filter must not move it
+fix(tui): keep the open list visible in the sidebar
+# Scrolling the highlight into view also covers creating and deleting lists
 
-applyFilter cleared the selected identifier and reset the highlight to the
-first row. Selecting the second of two unfinished tasks and then narrowing to
-Incomplete left the highlight on the first, so the next completion or
-deletion acted on a task the user had not chosen.
+The sidebar was never scrolled, so navigating a long list of task lists
+moved the open list off screen while its tasks stayed visible. At eighty
+columns with thirty lists, the selected name was nowhere on the display, so
+the screen stopped saying which list was open.
 
-The highlight now follows the task. When the task is still shown it stays
-selected and the index is recomputed for its new row; only when it leaves
-the view does the highlight move, landing near the position it held. The
-same rule now covers reconciliation after an external change, so both paths
-share one implementation.
+The sidebar is now revealed whenever the current list changes, not only
+when it has keyboard focus. The jump is deferred to the end of the frame
+because creating or deleting a list leaves the scroll extent describing the
+previous frame, and a jump measured against that gets clamped back to a
+position that hides the row being revealed.

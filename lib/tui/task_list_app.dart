@@ -30,6 +30,12 @@ import 'task_screen.dart';
 final class TaskListApp extends StatefulComponent {
   const TaskListApp({super.key, required this.book, required this.screen});
 
+  /// How many columns the list sidebar occupies.
+  ///
+  /// Published so a test can read the sidebar column without duplicating the
+  /// number.
+  static const double sidebarWidth = 26;
+
   /// The application object that owns the book and every operation on it.
   final TaskBook book;
 
@@ -42,7 +48,7 @@ final class TaskListApp extends StatefulComponent {
 }
 
 class _TaskListAppState extends State<TaskListApp> {
-  static const double sidebarWidth = 26;
+  static const double sidebarWidth = TaskListApp.sidebarWidth;
   static const double dialogWidth = 60;
 
   final ScrollController _taskScroll = ScrollController();
@@ -324,21 +330,43 @@ class _TaskListAppState extends State<TaskListApp> {
     _revealSelection();
   }
 
-  /// Scrolls the task area so the highlighted row stays on screen.
+  /// Scrolls whichever panes are showing a highlight so they stay on screen.
   ///
-  /// The controller already knows how many rows the viewport shows, so the
-  /// widget never has to measure the screen itself.
+  /// Each controller already knows how many rows its viewport shows, so the
+  /// widget never has to measure the screen itself. The sidebar matters as
+  /// much as the task area: it always names the list that is open, so once it
+  /// scrolls away from the current list the screen stops saying which list is
+  /// being shown, whichever pane has focus.
+  ///
+  /// The work is deferred to the end of the frame. A change that adds or
+  /// removes a row leaves the scroll extent describing the previous frame, and
+  /// a jump made against that would be clamped back to a position hiding the
+  /// very row being revealed.
   void _revealSelection() {
-    if (_screen.pane != Pane.tasks) return;
-    final index = _screen.selectedIndex;
+    final pane = _screen.pane;
+    final listIndex = _screen.selectedListIndex;
+    final taskIndex = _screen.selectedIndex;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _scrollIntoView(_listScroll, listIndex);
+      if (pane == Pane.tasks) _scrollIntoView(_taskScroll, taskIndex);
+    });
+  }
+
+  /// Scrolls [controller] so row [index] is visible.
+  ///
+  /// The target is kept clear of the bottom edge rather than sitting in the
+  /// last slot. The sidebar insets its list by a row, so the reported viewport
+  /// and the painted rows can disagree by one; leaving a row of slack absorbs
+  /// that without visibly jumping.
+  void _scrollIntoView(ScrollController controller, int index) {
     if (index < 0) return;
-    final rows = _taskScroll.viewportDimension.toInt();
-    if (rows <= 0) return;
-    final top = _taskScroll.offset.toInt();
+    final rows = controller.viewportDimension.toInt();
+    if (rows <= 1) return;
+    final top = controller.offset.toInt();
     if (index < top) {
-      _taskScroll.jumpTo(index.toDouble());
-    } else if (index >= top + rows) {
-      _taskScroll.jumpTo((index - rows + 1).toDouble());
+      controller.jumpTo(index.toDouble());
+    } else if (index > top + rows - 2) {
+      controller.jumpTo((index - rows + 2).toDouble());
     }
   }
 

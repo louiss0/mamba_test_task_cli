@@ -82,6 +82,20 @@ void main() {
     );
   }
 
+  /// The text of the sidebar column alone.
+  ///
+  /// The main pane repeats the open list's name in its empty state, so an
+  /// assertion over the whole screen would pass even with the sidebar scrolled
+  /// away from it. Reading the column is what actually proves the finding.
+  String sidebarOf(NoctermTester tester) => tester.terminalState.getText(
+        area: Rect.fromLTWH(
+          0,
+          0,
+          TaskListApp.sidebarWidth,
+          tester.terminalState.size.height,
+        ),
+      );
+
   group('empty book', () {
     test('explains how to start', () async {
       await testNocterm('empty book', (tester) async {
@@ -506,6 +520,81 @@ void main() {
           'Ship it',
         );
       });
+    });
+  });
+
+  group('the sidebar always names the open list', () {
+    /// Creates [count] lists named `List0` .. `List<count - 1>`.
+    Future<void> seedMany(int count) async {
+      for (var i = 0; i < count; i++) {
+        await book.createList('List$i');
+      }
+    }
+
+    test('follows the highlight down an overflowing sidebar', () async {
+      await testNocterm('sidebar scrolls', (tester) async {
+        await seedMany(30);
+        await boot(tester);
+
+        await pressBare(tester, LogicalKey.tab);
+        for (var i = 0; i < 29; i++) {
+          await press(tester, Action.moveDown);
+        }
+
+        expect(screen.currentList?.name, 'List29');
+        expect(
+          sidebarOf(tester),
+          contains('List29'),
+          reason: 'the open list has to stay on screen at all',
+        );
+        expect(
+          sidebarOf(tester),
+          isNot(contains('List0 ')),
+          reason: 'the sidebar scrolls rather than growing',
+        );
+      }, size: const Size(80, 24));
+    });
+
+    test('reveals a list created below the fold', () async {
+      await testNocterm('sidebar reveals new list', (tester) async {
+        await seedMany(28);
+        await boot(tester);
+        await pressBare(tester, LogicalKey.tab);
+        for (var i = 0; i < 27; i++) {
+          await press(tester, Action.moveDown);
+        }
+
+        await press(tester, Action.newList);
+        await type(tester, 'Fresh');
+        await pressBare(tester, LogicalKey.enter);
+        await tester.pump(const Duration(milliseconds: 20));
+
+        expect(screen.currentList?.name, 'Fresh');
+        expect(sidebarOf(tester), contains('Fresh'));
+      }, size: const Size(80, 24));
+    });
+
+    test('reveals the neighbour taken over after a deletion', () async {
+      await testNocterm('sidebar follows deletion', (tester) async {
+        await seedMany(28);
+        await boot(tester);
+        await pressBare(tester, LogicalKey.tab);
+        for (var i = 0; i < 27; i++) {
+          await press(tester, Action.moveDown);
+        }
+        expect(screen.currentList?.name, 'List27');
+
+        await press(tester, Action.deleteList);
+        await pressBare(tester, LogicalKey.enter);
+        await tester.pump(const Duration(milliseconds: 20));
+
+        expect(screen.currentList?.name, 'List26');
+        expect(
+          sidebarOf(tester),
+          contains('List26'),
+          reason: 'the list that took over has to be on screen',
+        );
+      }, size: const Size(80, 24));
     });
   });
 
