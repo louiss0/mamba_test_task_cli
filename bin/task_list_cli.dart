@@ -1,8 +1,4 @@
-import 'package:mamba/mamba.dart';
+import 'package:task_list_cli/task_list_app.dart';
 
-Future<void> main(List<String> args) => Executor(
-  'task_list_cli',
-  'This application is a task list app',
-  '0.0.0',
-  [],
-).create().execute(args);
+Future<void> main(List<String> args) =>
+    createTaskListExecutor().create().execute(args);
