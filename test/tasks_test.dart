@@ -369,7 +369,7 @@ void main() {
       final list = await seed('Work', titles: ['One', 'Two']);
       final reference = await referenceOf(list, 0);
 
-      final result = await run(['tasks', 'rm', 'Work', reference]);
+      final result = await run(['tasks', 'rm', 'Work', reference, '--force']);
 
       expect(
         (result as MambaSuccessResult).output,
@@ -380,7 +380,66 @@ void main() {
       expect(shown, contains('Two'));
     });
 
+    test('accepts the short force flag', () async {
+      final list = await seed('Work', titles: ['One']);
+      final reference = await referenceOf(list, 0);
+
+      final result = await run(['tasks', 'rm', 'Work', reference, '-f']);
+
+      expect(result, isA<MambaSuccessResult>());
+      expect((await outputOf(['tasks', 'ls', 'Work'])), isNot(contains('One')));
+    });
+
+    test('refuses to delete without confirmation and keeps the task', () async {
+      // A removal cannot be undone, so a mistyped reference must not discard
+      // work without a second deliberate act.
+      final list = await seed('Work', titles: ['One']);
+
+      final result = await run(['tasks', 'rm', 'Work', await referenceOf(list, 0)]);
+
+      expect(
+        result,
+        fails(
+          exitCode: 4,
+          message: allOf(
+            contains('will be deleted for good'),
+            contains('--force'),
+          ),
+          phase: MambaExecutionPhase.run,
+          commandPath: ['task_list', 'tasks', 'rm'],
+        ),
+      );
+      expect(
+        await outputOf(['tasks', 'ls', 'Work']),
+        contains('One'),
+        reason: 'an unconfirmed removal must not change anything',
+      );
+    });
+
     test('reports an unknown reference', () async {
+      await seed('Work', titles: ['One']);
+
+      final result = await run([
+        'tasks',
+        'rm',
+        'Work',
+        'nosuchref',
+        '--force',
+      ]);
+
+      expect(
+        result,
+        fails(
+          exitCode: 3,
+          message: contains('no task with reference "nosuchref"'),
+          phase: MambaExecutionPhase.run,
+          commandPath: ['task_list', 'tasks', 'rm'],
+        ),
+      );
+    });
+
+    test('reports an unknown reference before asking for confirmation',
+        () async {
       await seed('Work', titles: ['One']);
 
       final result = await run(['tasks', 'rm', 'Work', 'nosuchref']);
@@ -400,9 +459,15 @@ void main() {
   group('task references', () {
     test('stay valid after another task is deleted', () async {
       final list = await seed('Work', titles: ['One', 'Two', 'Three']);
+      final removed = await referenceOf(list, 0);
       final reference = await referenceOf(list, 2);
 
-      await run(['tasks', 'rm', 'Work', await referenceOf(list, 0)]);
+      await run(['tasks', 'rm', 'Work', removed, '--force']);
+      expect(
+        await outputOf(['tasks', 'ls', 'Work']),
+        isNot(contains('One')),
+        reason: 'the neighbouring task really has to be gone',
+      );
 
       final result = await run(['tasks', 'done', 'Work', reference]);
 

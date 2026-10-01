@@ -290,7 +290,8 @@ final class TasksUndone extends Command {
 
 /// Deletes a task.
 final class TasksRm extends Command {
-  new(this.repository) : super(mandatoryPositionals: [listName, reference]);
+  new(this.repository)
+      : super(mandatoryPositionals: [listName, reference], flags: [force]);
 
   final TaskRepository repository;
 
@@ -305,6 +306,12 @@ final class TasksRm extends Command {
     description: 'Task reference shown by "tasks ls".',
   );
 
+  static final BooleanFlag force = BooleanFlag(
+    'force',
+    short: 'f',
+    description: 'Confirm the deletion.',
+  );
+
   @override
   String get name => 'rm';
 
@@ -312,11 +319,24 @@ final class TasksRm extends Command {
   String get shortDescription => 'Delete a task.';
 
   @override
+  String get longDescription =>
+      'Deletes one task for good. --force has to be given to confirm, so a '
+      'mistyped reference cannot discard work without a second deliberate '
+      'act. Scripts pass it too.';
+
+  @override
   Future<String?> run(ParsedInputs inputs, List<String> args) =>
       guardCommand(() async {
         final book = await openTaskBook(repository: repository);
         final list = book.requireListByName(inputs.valueOf(listName));
         final task = resolveTask(list, inputs.valueOf(reference));
+        if (!inputs.valueOf(force)) {
+          throw MambaException(
+            'Task ${task.reference} "${task.title}" will be deleted for good. '
+            'Re-run with --force to confirm.',
+            exitCode: exitRejected,
+          );
+        }
         await book.deleteTask(list.id, task.id);
         return 'Deleted task ${task.reference} "${task.title}".';
       });

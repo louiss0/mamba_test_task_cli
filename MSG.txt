@@ -1,14 +1,11 @@
-fix(persistence): reject values the application would never write
-# A hand-edited name no longer loads into a list nothing can find
+fix(cli): require --force before a task is deleted
+# An irreversible removal now takes a second deliberate act
 
-The decoder checked that JSON had the right shape but not that the values
-were ones this application produces. A list stored as " Work " loaded fine
-and then could not be found by a lookup for "Work", and empty task
-identifiers and titles were accepted and rewritten as valid data on the next
-save.
+The specification asks for confirmation before deleting a task, and the
+non-interactive command gave none: one mistyped reference removed the task
+immediately, with no way back. Removing a populated list already required
+--force, so the two destructive commands now behave alike.
 
-Decoding now runs the same naming rules the application applies to its own
-writes, and requires identifiers and list names to already be in their stored
-form. Rejections name the path, leave the file in place for inspection, and
-carry the reason. Everything this application writes still round-trips, so no
-existing book becomes unreadable.
+The task is resolved first, so an unknown reference still reports the lookup
+problem rather than asking the user to confirm a deletion that cannot happen.
+Scripts pass --force, and the interactive interface keeps asking in a dialog.
