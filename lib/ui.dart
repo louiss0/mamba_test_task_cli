@@ -28,6 +28,7 @@ final class _TaskBoardState extends State<_TaskBoard> {
   bool _listFocus = false;
   bool _busy = false;
   bool _dialogOpen = false;
+  bool _selectionScrollPending = false;
   TaskFilter _filter = TaskFilter.all;
   String _message = 'Welcome. Tab switches panes; ? opens help.';
   final _listScroll = ScrollController();
@@ -57,8 +58,16 @@ final class _TaskBoardState extends State<_TaskBoard> {
           : _listIndex.clamp(0, _service.lists.length - 1);
       _taskIndex = _tasks.isEmpty ? 0 : _taskIndex.clamp(0, _tasks.length - 1);
     });
-    _listScroll.ensureIndexVisible(index: _listIndex);
-    _taskScroll.ensureIndexVisible(index: _taskIndex);
+    if (_selectionScrollPending) return;
+    _selectionScrollPending = true;
+    // Appended rows and their scroll bounds exist only after the next layout.
+    // Coalesce refreshes and use the latest selection rather than stale indices.
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _selectionScrollPending = false;
+      if (!mounted) return;
+      _listScroll.ensureIndexVisible(index: _listIndex);
+      _taskScroll.ensureIndexVisible(index: _taskIndex);
+    });
   }
 
   Future<void> _act(Future<void> Function() operation) async {
@@ -541,7 +550,11 @@ final class _HelpDialog extends StatelessComponent {
   Component build(BuildContext context) => Focusable(
     focused: true,
     onKeyEvent: (event) {
-      Navigator.of(context).pop<void>();
+      if (event.logicalKey == LogicalKey.escape ||
+          event.logicalKey == LogicalKey.enter ||
+          event.logicalKey == LogicalKey.keyQ) {
+        Navigator.of(context).pop<void>();
+      }
       return true;
     },
     child: Container(
@@ -550,22 +563,31 @@ final class _HelpDialog extends StatelessComponent {
         color: Colors.black,
         border: BoxBorder.all(color: Colors.cyan),
       ),
-      child: const Column(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Keyboard help', style: TextStyle(fontWeight: FontWeight.bold)),
-          Text('Tab / Left / Right    Switch list and task panes'),
-          Text('Up / Down / j / k     Select a list or task'),
-          Text('Home / End / PgUp/Dn  Jump through items'),
-          Text('n                     Create in the focused pane'),
-          Text('e                     Rename list / edit task'),
-          Text('Space / x             Complete or reopen task'),
-          Text('d / Delete            Delete with confirmation'),
-          Text('1 / 2 / 3 / f         All / Incomplete / Completed / cycle'),
-          Text('q                     Quit (every change is saved)'),
-          Text('Enter saves a form; Esc cancels it.'),
-          Text('Selection uses stable IDs, never displayed row numbers.'),
-          Text('Press any key to return.'),
+          const Text('Keyboard help', style: TextStyle(fontWeight: FontWeight.bold)),
+          Expanded(
+            child: ListView(
+              keyboardScrollable: true,
+              children: const [
+                Text('Tab / Left / Right: Switch panes'),
+                Text('Up / Down / j / k: Select list or task'),
+                Text('Home / End: First / last item'),
+                Text('Page Up / Page Down: Move ten items'),
+                Text('n: Create in the focused pane'),
+                Text('e: Rename list / edit task'),
+                Text('Space / x: Complete or reopen task'),
+                Text('d / Delete: Delete with confirmation'),
+                Text('1 / 2 / 3: All / Incomplete / Completed'),
+                Text('f: Cycle completion filters'),
+                Text('q: Quit (every change is saved)'),
+                Text('Enter saves a form; Esc cancels it.'),
+                Text('Selection uses stable IDs, not row numbers.'),
+              ],
+            ),
+          ),
+          const Text('↑↓ / PgUp/PgDn scroll | Esc close', maxLines: 1),
         ],
       ),
     ),

@@ -244,6 +244,75 @@ void main() {
       },
     );
 
+    test('appending a task beyond the viewport reveals its selected row', () async {
+      await service.createList('Work');
+      for (var i = 0; i < 40; i++) {
+        await service.createTask('Work', 'Task $i');
+      }
+      await testNocterm('append task visibility', (tester) async {
+        await tester.pumpComponent(TaskApp(service));
+        await tester.sendKey(LogicalKey.keyN);
+        await tester.enterText('New task');
+        await tester.sendEnter();
+        await until(tester, () => service.query('Work').length == 41);
+        await tester.pump();
+        expect(tester.terminalState, containsText('> [ ] New task'));
+        expect(service.query('Work').last.title, 'New task');
+      });
+    });
+
+    test('appending a list beyond the viewport reveals its selected row', () async {
+      for (var i = 0; i < 40; i++) {
+        await service.createList('List $i');
+      }
+      await testNocterm('append list visibility', (tester) async {
+        await tester.pumpComponent(TaskApp(service));
+        await tester.sendTab();
+        await tester.sendKey(LogicalKey.keyN);
+        await tester.enterText('New list');
+        await tester.sendEnter();
+        await until(tester, () => service.lists.length == 41);
+        await tester.pump();
+        expect(tester.terminalState, containsText('> New list (0)'));
+        expect(tester.terminalState, containsText('TASK LIST  /  New list'));
+      });
+    });
+
+    test('keyboard help is readable and scrollable at the minimum size', () async {
+      final before = writes;
+      await testNocterm('minimum-size help', (tester) async {
+        await tester.pumpComponent(TaskApp(service));
+        await tester.sendKey(LogicalKey.f1);
+        expect(tester.terminalState, containsText('Keyboard help'));
+        expect(tester.terminalState, containsText('Esc close'));
+        final screens = <String>[tester.renderToString()];
+        for (var i = 0; i < 30; i++) {
+          await tester.sendArrowDown();
+          expect(tester.terminalState, containsText('Keyboard help'));
+          expect(tester.terminalState, containsText('Esc close'));
+          screens.add(tester.renderToString());
+        }
+        final visibleHelp = screens.join('\n');
+        for (final entry in [
+          'Tab / Left / Right', 'Up / Down / j / k', 'Home / End',
+          'Page Up / Page Down', 'n: Create', 'e: Rename',
+          'Space / x: Complete', 'd / Delete: Delete',
+          '1 / 2 / 3', 'f: Cycle', 'q: Quit',
+          'Enter saves a form; Esc cancels it.', 'stable IDs',
+        ]) {
+          expect(visibleHelp, contains(entry));
+        }
+        await tester.sendKey(LogicalKey.home);
+        expect(tester.terminalState, containsText('Tab / Left / Right'));
+        await tester.sendKey(LogicalKey.end);
+        expect(tester.terminalState, containsText('stable IDs'));
+        await tester.sendEscape();
+        await tester.pump();
+        expect(tester.terminalState, isNot(containsText('Keyboard help')));
+        expect(writes, before);
+      }, size: const Size(48, 14));
+    });
+
     test('long lists keep keyboard-selected rows visible', () async {
       await service.createList('Work');
       for (var i = 0; i < 40; i++) {
