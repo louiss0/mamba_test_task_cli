@@ -1,0 +1,13 @@
+fix(tui): keep the selected task when a filter narrows the view
+# Selection is an identity, so changing the filter must not move it
+
+applyFilter cleared the selected identifier and reset the highlight to the
+first row. Selecting the second of two unfinished tasks and then narrowing to
+Incomplete left the highlight on the first, so the next completion or
+deletion acted on a task the user had not chosen.
+
+The highlight now follows the task. When the task is still shown it stays
+selected and the index is recomputed for its new row; only when it leaves
+the view does the highlight move, landing near the position it held. The
+same rule now covers reconciliation after an external change, so both paths
+share one implementation.

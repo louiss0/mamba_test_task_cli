@@ -123,12 +123,35 @@ final class TaskScreen {
 
     final tasks = visibleTasks;
     if (tasks.isEmpty) {
-      _taskId = null;
       _pane = Pane.tasks;
-    } else if (tasks.every((Task task) => task.id != _taskId)) {
-      _taskId = tasks[_taskIndex.clamp(0, tasks.length - 1)].id;
     }
+    _reanchorSelection();
     return _pane;
+  }
+
+  /// Keeps the highlight on the same task when the visible set changes.
+  ///
+  /// A task that is still shown stays selected, because it is the one the user
+  /// was looking at: narrowing a filter must not silently aim the next
+  /// completion or deletion at a different task. Only when the selected task
+  /// leaves the view does the highlight move, and then it lands near the
+  /// position it held.
+  void _reanchorSelection() {
+    final tasks = visibleTasks;
+    if (tasks.isEmpty) {
+      _taskId = null;
+      _taskIndex = 0;
+      return;
+    }
+    final kept = _taskId == null
+        ? -1
+        : tasks.indexWhere((Task task) => task.id == _taskId);
+    if (kept >= 0) {
+      _taskIndex = kept;
+      return;
+    }
+    _taskIndex = _taskIndex.clamp(0, tasks.length - 1);
+    _taskId = tasks[_taskIndex].id;
   }
 
   /// Moves keyboard focus between the list pane and the task pane.
@@ -170,8 +193,7 @@ final class TaskScreen {
   void applyFilter(CompletionFilter filter) {
     if (_filter == filter) return;
     _filter = filter;
-    _taskId = null;
-    _taskIndex = 0;
+    _reanchorSelection();
   }
 
   /// Moves to the previous or next completion state, wrapping around.

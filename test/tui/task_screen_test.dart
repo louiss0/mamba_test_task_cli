@@ -178,6 +178,57 @@ void main() {
       expect(book.requireListByName('Work').tasks, hasLength(2));
       expect(repository.writeCount, writesBefore);
     });
+
+    test('keeps a selected task selected when it is still shown', () async {
+      // The selection is an identity, not a row number, so narrowing the view
+      // must not aim the next action at a different task.
+      final list = book.requireListByName('Work');
+      await book.addTask(list.id, 'Open three');
+      screen.open();
+      screen.moveSelection(2);
+      expect(screen.selectedTask?.title, 'Open three');
+
+      screen.applyFilter(CompletionFilter.incomplete);
+
+      expect(
+        screen.selectedTask?.title,
+        'Open three',
+        reason: 'the selected task is still in the narrower view',
+      );
+      expect(screen.visibleTasks, hasLength(2));
+    });
+
+    test('follows the task to its new row when the filter moves it', () async {
+      // 'Open two' is finished, so it sits at row 1 in the all view and row 0
+      // in the completed view.
+      screen.moveSelection(1);
+      final chosen = screen.selectedTask!;
+      expect(screen.selectedIndex, 1);
+
+      screen.applyFilter(CompletionFilter.completed);
+
+      expect(screen.selectedTask?.id, chosen.id);
+      expect(
+        screen.selectedIndex,
+        0,
+        reason: 'the highlight follows the task rather than the row number',
+      );
+    });
+
+    test('falls back near the old position when the task is hidden', () async {
+      // 'Open two' is finished, so it leaves the incomplete view. The
+      // highlight should keep its row rather than jumping back to the top.
+      final list = book.requireListByName('Work');
+      await book.addTask(list.id, 'Open three');
+      screen.open();
+      screen.moveSelection(1);
+      expect(screen.selectedTask?.title, 'Open two');
+
+      screen.applyFilter(CompletionFilter.incomplete);
+
+      expect(screen.selectedTask?.title, 'Open three');
+      expect(screen.selectedIndex, 1);
+    });
   });
 
   group('completing a task', () {
